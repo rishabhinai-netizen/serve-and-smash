@@ -712,7 +712,29 @@ def page_player():
                 color = TEAM_COLORS[i%len(TEAM_COLORS)]
                 is_mine = my_team and t["name"]==my_team["name"]
                 with cols[i%4]:
-                    st.markdown(f"<div style='background:#1a1a25;border:1px solid rgba(255,255,255,0.08);border-left:3px solid {color};padding:14px;margin-bottom:12px;{\"outline:2px solid #ffb800;\" if is_mine else \"\"}'><div style='font-family:Bebas Neue,cursive;font-size:22px;letter-spacing:3px;color:{color}'>{t['name']} {\"⭐\" if is_mine else \"\"}</div><div style='color:#e0e0f0;font-size:14px;margin-top:6px'>🏸 {p1.get('name','?')}</div><div style='color:#e0e0f0;font-size:14px'>🏸 {p2.get('name','?')}</div></div>", unsafe_allow_html=True)
+                    mine_border = "outline:2px solid #ffb800;" if is_mine else ""
+                    mine_star = "&#11088;" if is_mine else ""
+                    p1n = p1.get("name", "?")
+                    p2n = p2.get("name", "?")
+                    tn = t["name"]
+                    html_card = (
+                        f"<div style='background:#1a1a25;border:1px solid rgba(255,255,255,0.08);"
+                        f"border-left:3px solid {color};padding:14px;margin-bottom:12px;{mine_border}>"
+                        f"<div style='font-family:Bebas Neue,cursive;font-size:22px;letter-spacing:3px;color:{color}'>"
+                        f"{tn} {mine_star}</div>"
+                        f"<div style='color:#e0e0f0;font-size:14px;margin-top:6px'>&#127992; {p1n}</div>"
+                        f"<div style='color:#e0e0f0;font-size:14px'>&#127992; {p2n}</div></div>"
+                    )
+                    st.markdown(html_card, unsafe_allow_html=True)
+                    html = (
+                        f"<div style='background:#1a1a25;border:1px solid rgba(255,255,255,0.08);"
+                        f"border-left:3px solid {color};padding:14px;margin-bottom:12px;{mine_border}'>"
+                        f"<div style='font-family:Bebas Neue,cursive;font-size:22px;letter-spacing:3px;color:{color}'>"
+                        f"{tn} {mine_star}</div>"
+                        f"<div style='color:#e0e0f0;font-size:14px;margin-top:6px'>&#127992; {p1n}</div>"
+                        f"<div style='color:#e0e0f0;font-size:14px'>&#127992; {p2n}</div></div>"
+                    )
+                    st.markdown(html, unsafe_allow_html=True)
 
 def _show_teams_grid(teams):
     cols = st.columns(4)
