@@ -6,7 +6,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from supabase import create_client, Client
 
-st.set_page_config(page_title="Serve & Smash | Pickleball",page_icon="🏓",layout="wide",initial_sidebar_bar="expanded")
+st.set_page_config(page_title="Serve & Smash | Pickleball",page_icon="🏓",layout="wide",initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
