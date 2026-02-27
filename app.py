@@ -34,6 +34,10 @@ div[data-testid="stDecoration"]{display:none;}
 .badge-done{font-size:10px;font-weight:600;color:#15803d;background:#dcfce7;padding:3px 9px;border-radius:20px;white-space:nowrap;}
 .badge-pending{font-size:10px;font-weight:600;color:#64748b;background:#f1f5f9;padding:3px 9px;border-radius:20px;white-space:nowrap;}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.5}}
+/* ── Referee score — always horizontal on all screen sizes ── */
+.ref-score-row{display:flex !important;flex-direction:row !important;gap:10px;align-items:stretch;margin-bottom:14px;}
+.ref-score-row .sbox{flex:1;min-width:0;}
+.ref-score-sep{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0;}
 .court-hdr{font-size:12px;font-weight:800;color:#2563eb;letter-spacing:2px;text-transform:uppercase;margin:16px 0 8px;padding-bottom:6px;border-bottom:2px solid #eff6ff;}
 .sbox{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px;text-align:center;}
 .sbox-name{font-size:12px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
@@ -44,8 +48,11 @@ div[data-testid="stDecoration"]{display:none;}
 .live-team-name{font-size:13px;font-weight:800;color:#0f172a;text-transform:uppercase;}
 .live-team-players{font-size:11px;color:#94a3b8;margin:3px 0 6px;}
 .live-score{font-family:'Inter',sans-serif;font-size:68px;font-weight:900;line-height:1;}
-.lb-head{display:grid;grid-template-columns:36px 1fr 52px 40px 40px 64px 64px 64px;gap:4px;padding:7px 12px;background:#f8fafc;border-radius:8px 8px 0 0;font-size:10px;font-weight:700;color:#64748b;letter-spacing:1.5px;text-transform:uppercase;border:1px solid #e2e8f0;}
-.lb-row{display:grid;grid-template-columns:36px 1fr 52px 40px 40px 64px 64px 64px;gap:4px;padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-top:none;font-size:13px;align-items:center;}
+.lb-head{display:grid;grid-template-columns:34px 1fr 28px 28px 28px 42px 42px 48px;gap:6px;
+  padding:8px 12px;background:#f8fafc;border-radius:8px 8px 0 0;font-size:10px;font-weight:700;
+  color:#64748b;letter-spacing:1px;text-transform:uppercase;border:1px solid #e2e8f0;}
+.lb-row{display:grid;grid-template-columns:34px 1fr 28px 28px 28px 42px 42px 48px;gap:6px;
+  padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-top:none;font-size:13px;align-items:center;}
 .lb-row:last-child{border-radius:0 0 8px 8px;}
 .lb-row.qual{border-left:3px solid #f59e0b;background:#fffbeb;}
 .lb-row.mine{background:#eff6ff;border-left:3px solid #2563eb;}
@@ -72,9 +79,10 @@ div[data-testid="stDecoration"]{display:none;}
 .mc-label{font-size:11px;font-weight:700;letter-spacing:3px;color:#fbbf24;text-transform:uppercase;margin-bottom:6px;}
 .mc-winner{font-family:'Inter',sans-serif;font-size:36px;font-weight:900;letter-spacing:-.5px;}
 .mc-score{font-size:24px;font-weight:800;color:rgba(255,255,255,.8);margin-top:6px;}
-.moment-broadcast{background:linear-gradient(135deg,#1e40af,#7c3aed);color:#fff;border-radius:10px;padding:12px 16px;margin:4px 0;display:flex;align-items:center;gap:10px;}
-.mb-icon{font-size:24px;}.mb-text{font-size:13px;font-weight:700;}
-.mb-sub{font-size:11px;color:rgba(255,255,255,.75);margin-top:2px;}
+.moment-broadcast{background:#fff;border:1px solid #e2e8f0;border-left:3px solid #6366f1;color:#0f172a;
+  border-radius:10px;padding:12px 16px;margin:4px 0;display:flex;align-items:center;gap:10px;box-shadow:0 1px 4px rgba(0,0,0,.05);}
+.mb-icon{font-size:22px;flex-shrink:0;}.mb-text{font-size:13px;font-weight:700;color:#0f172a;}
+.mb-sub{font-size:11px;color:#64748b;margin-top:2px;}
 .award-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:18px;margin-bottom:12px;}
 .award-winner-box{background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:10px;padding:14px;text-align:center;margin-top:10px;}
 .award-winner-name{font-size:18px;font-weight:900;color:#92400e;}
@@ -82,6 +90,19 @@ div[data-testid="stDecoration"]{display:none;}
 .vote-option:hover{border-color:#2563eb;background:#eff6ff;}
 .vote-option.selected{border-color:#2563eb;background:#eff6ff;}
 .history-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:8px;}
+/* History tile grid */
+.hist-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:4px;}
+@media(min-width:900px){.hist-grid{grid-template-columns:repeat(5,1fr);}}
+.hist-tile{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:12px;cursor:pointer;
+  transition:all .15s;text-align:center;position:relative;overflow:hidden;}
+.hist-tile:hover{border-color:#2563eb;box-shadow:0 4px 12px rgba(37,99,235,.12);}
+.hist-tile.live-border{border-left:3px solid #ef4444;}
+.hist-tile.completed-border{border-left:3px solid #22c55e;}
+.hist-tile-num{font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
+.hist-tile-teams{font-size:12px;font-weight:700;color:#0f172a;line-height:1.3;margin-bottom:6px;}
+.hist-tile-score{font-family:'Inter',sans-serif;font-size:20px;font-weight:900;color:#0f172a;margin-bottom:4px;}
+.hist-tile-winner{font-size:10px;color:#15803d;font-weight:700;}
+.hist-tile-court{font-size:10px;color:#94a3b8;margin-top:2px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -387,7 +408,7 @@ def render_match_row(m):
     t1n=t1.get("name","?"); t2n=t2.get("name","?")
     score_str = f"{s1} — {s2}" if status!="pending" else "vs"
     if status=="live": badge='<span class="badge-live">● LIVE</span>'
-    elif status=="completed": badge='<span class="badge-done">✓ Done</span>'
+    elif status=="completed": badge='<span class="badge-done">✓ Completed</span>'
     else: badge='<span class="badge-pending">Upcoming</span>'
     win_part=""
     if winner.get("name") and status=="completed":
@@ -522,7 +543,57 @@ def show_teams_grid(teams):
                 unsafe_allow_html=True
             )
 
-def spin_wheel_html(player_names):
+def render_history_tiles(history):
+    """Render match history as a responsive tile grid. Tap a tile to reveal moments."""
+    if not history:
+        st.info("No completed matches yet.")
+        return
+    icons_map={"good_shot":"🎯","great_rally":"🔥","crazy_comeback":"⚡"}
+    css_map={"good_shot":"m-good","great_rally":"m-rally","crazy_comeback":"m-comeback"}
+    label_map={"good_shot":"Good Shot","great_rally":"Great Rally","crazy_comeback":"Comeback!"}
+    stage_map={"group":"Group","semifinal":"Semi","third_place":"3rd Place","final":"Final"}
+
+    # Build tile grid HTML (pure HTML — always 3 cols mobile, 5 cols desktop)
+    tiles_html='<div class="hist-grid">'
+    for m in history:
+        t1=m.get("team1") or {}; t2=m.get("team2") or {}
+        winner=m.get("winner") or {}; court=m.get("court") or {}
+        s1=m.get("score_team1",0); s2=m.get("score_team2",0)
+        t1n=t1.get("name","?"); t2n=t2.get("name","?"); wn=winner.get("name","?")
+        stage=stage_map.get(m.get("stage",""),"?")
+        mn=m["match_number"]
+        tiles_html+=(
+            f'<div class="hist-tile completed-border" onclick="this.classList.toggle(\'open\')">'
+            f'<div class="hist-tile-num">{stage} · M{mn}</div>'
+            f'<div class="hist-tile-teams">{t1n}<br><span style="color:#cbd5e1;font-size:10px">vs</span><br>{t2n}</div>'
+            f'<div class="hist-tile-score">{s1}—{s2}</div>'
+            f'<div class="hist-tile-winner">🏆 {wn}</div>'
+            f'<div class="hist-tile-court">{court.get("name","?")}</div>'
+            f'</div>'
+        )
+    tiles_html+='</div>'
+    st.markdown(tiles_html, unsafe_allow_html=True)
+
+    # Moments — use expanders per match (tap to reveal), shown below the grid
+    has_moments=False
+    for m in history:
+        moments=get_moments(m["id"])
+        if moments:
+            if not has_moments:
+                st.markdown("<br>**🎯 Match Highlights (tap to expand)**", unsafe_allow_html=True)
+                has_moments=True
+            t1=m.get("team1") or {}; t2=m.get("team2") or {}
+            stage=stage_map.get(m.get("stage",""),"?")
+            with st.expander(f"M{m['match_number']} · {(t1.get('name','?'))} vs {(t2.get('name','?'))} — {stage}"):
+                mom_html="".join([
+                    f'<span class="moment-chip {css_map.get(mm["moment_type"],"m-good")}">'
+                    f'{icons_map.get(mm["moment_type"],"🏓")} '
+                    f'{label_map.get(mm["moment_type"],"")} '
+                    f'{(" — "+(mm.get("team") or {}).get("name","")) if (mm.get("team") or {}).get("name") else ""}'
+                    f' @{mm.get("score_at_time","")}</span>'
+                    for mm in moments
+                ])
+                st.markdown(mom_html, unsafe_allow_html=True)
     colors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2","#be185d","#b45309","#0f766e","#4338ca","#c2410c","#1d4ed8","#15803d","#7e22ce"]
     nj=json.dumps(player_names); cj=json.dumps(colors[:len(player_names)])
     return f"""<!DOCTYPE html><html><head>
@@ -833,36 +904,8 @@ def page_admin(state):
     with tabs[8]:
         st.markdown('<div class="stitle">📜 Match History</div>',unsafe_allow_html=True)
         history=get_match_history()
-        if not history: st.info("No completed matches yet.")
-        else:
-            st.markdown(f"**{len(history)} matches completed**")
-            for m in history:
-                t1=m.get("team1") or {}; t2=m.get("team2") or {}
-                winner=m.get("winner") or {}; court=m.get("court") or {}
-                s1=m.get("score_team1",0); s2=m.get("score_team2",0)
-                t1n=t1.get("name","?"); t2n=t2.get("name","?")
-                wn=winner.get("name","?"); cn=court.get("name","?")
-                stage_map={"group":"Group","semifinal":"Semi","third_place":"3rd Place","final":"Final"}
-                st.markdown(
-                    f'<div class="history-card">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                    f'<div><div style="font-size:15px;font-weight:700">{t1n} <span style="color:#cbd5e1">vs</span> {t2n}</div>'
-                    f'<div style="font-size:12px;color:#64748b">{stage_map.get(m.get("stage",""),"?")} · {cn} · Match {m["match_number"]}</div></div>'
-                    f'<div style="text-align:right"><div style="font-family:Inter,sans-serif;font-size:22px;font-weight:900">{s1}—{s2}</div>'
-                    f'<div style="font-size:12px;color:#15803d;font-weight:700">🏆 {wn}</div></div></div>',
-                    unsafe_allow_html=True
-                )
-                moments=get_moments(m["id"])
-                if moments:
-                    mom_html="".join([
-                        f'<span class="moment-chip m-{"good" if mm["moment_type"]=="good_shot" else "rally" if mm["moment_type"]=="great_rally" else "comeback"}">'
-                        f'{"🎯" if mm["moment_type"]=="good_shot" else "🔥" if mm["moment_type"]=="great_rally" else "⚡"} '
-                        f'{(mm.get("team") or {}).get("name","")} @{mm.get("score_at_time","")}</span>'
-                        for mm in moments
-                    ])
-                    st.markdown(f'<div style="margin-top:6px">{mom_html}</div></div>',unsafe_allow_html=True)
-                else:
-                    st.markdown("</div>",unsafe_allow_html=True)
+        st.caption(f"{len(history)} matches completed")
+        render_history_tiles(history)
 
 # ── REFEREE ───────────────────────────────────────────────────────────────────
 def page_referee(user):
@@ -902,16 +945,26 @@ def page_referee(user):
         unsafe_allow_html=True
     )
 
-    # Score boxes
-    sc1,scv,sc2=st.columns([5,2,5])
-    with sc1:
-        st.markdown(f'<div class="sbox"><div class="sbox-name">{t1.get("name","Team 1")}</div><div class="sbox-num score-red">{s1}</div></div>',unsafe_allow_html=True)
-    with scv:
-        label="FINAL" if status=="completed" else ("LIVE" if status=="live" else "READY")
-        color="#ef4444" if status=="live" else "#94a3b8"
-        st.markdown(f'<div style="text-align:center;padding:28px 0"><div style="font-size:14px;font-weight:900;color:{color}">{label}</div><div style="font-size:10px;font-weight:700;color:#e2e8f0;margin-top:4px;letter-spacing:1px">FIRST TO 15</div></div>',unsafe_allow_html=True)
-    with sc2:
-        st.markdown(f'<div class="sbox"><div class="sbox-name">{t2.get("name","Team 2")}</div><div class="sbox-num score-blue">{s2}</div></div>',unsafe_allow_html=True)
+    # Score boxes — always horizontal (flex row) on all screen sizes
+    label="FINAL" if status=="completed" else ("LIVE" if status=="live" else "READY")
+    color_label="#ef4444" if status=="live" else "#94a3b8"
+    st.markdown(
+        f'<div class="ref-score-row">'
+        f'<div class="sbox" style="flex:1">'
+        f'<div class="sbox-name">{t1.get("name","Team 1")}</div>'
+        f'<div class="sbox-num score-red">{s1}</div>'
+        f'</div>'
+        f'<div class="ref-score-sep">'
+        f'<div style="font-size:13px;font-weight:900;color:{color_label};white-space:nowrap">{label}</div>'
+        f'<div style="font-size:9px;font-weight:700;color:#e2e8f0;margin-top:4px;letter-spacing:1px">TO 15</div>'
+        f'</div>'
+        f'<div class="sbox" style="flex:1">'
+        f'<div class="sbox-name">{t2.get("name","Team 2")}</div>'
+        f'<div class="sbox-num score-blue">{s2}</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
     st.markdown("<br>",unsafe_allow_html=True)
 
@@ -1067,6 +1120,9 @@ def page_player(user):
     with tabs[4]:
         st.markdown('<div class="stitle">🏅 Awards & Voting</div>',unsafe_allow_html=True)
         revealed=get_revealed()
+        # Check if all matches are done — voting only opens after group stage complete
+        state_now=get_state()
+        all_matches_done=state_now.get("group_stage_complete",False)
         if revealed:
             st.success("🎉 Results are out!")
             results=get_vote_results()
@@ -1081,6 +1137,20 @@ def page_player(user):
                 if winner:
                     st.markdown(f'<div class="award-winner-box"><div style="font-size:11px;font-weight:700;color:#92400e;letter-spacing:2px;text-transform:uppercase">🏅 WINNER</div><div class="award-winner-name">🏆 {winner}</div></div>',unsafe_allow_html=True)
                 st.markdown("</div>",unsafe_allow_html=True)
+        elif not all_matches_done:
+            # Count remaining
+            all_g=get_matches("group")
+            done_count=sum(1 for m in all_g if m["status"]=="completed")
+            remaining=len(all_g)-done_count
+            st.markdown(
+                f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:20px;text-align:center;margin:12px 0">'
+                f'<div style="font-size:28px;margin-bottom:8px">🔒</div>'
+                f'<div style="font-size:16px;font-weight:800;color:#92400e;margin-bottom:6px">Voting Not Open Yet</div>'
+                f'<div style="font-size:14px;color:#b45309">Awards open after all group matches are completed.</div>'
+                f'<div style="font-size:13px;color:#64748b;margin-top:8px">{done_count}/{len(all_g)} matches done · {remaining} remaining</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
         else:
             cats=get_award_categories()
             if not cats: st.info("No award categories yet.")
@@ -1104,7 +1174,6 @@ def page_player(user):
                             voted_name=next((t["name"] for t in teams if t["id"]==voted_tid),"?")
                             st.success(f"✅ Voted: **{voted_name}**")
                         else:
-                            # Filter out my own team (no self-voting)
                             eligible=[t for t in teams if not my_team or t["id"]!=my_team["id"]]
                             vote_key=f"vote_{cat['id']}"
                             choice=st.selectbox(
@@ -1124,32 +1193,8 @@ def page_player(user):
     with tabs[5]:
         st.markdown('<div class="stitle">📜 Match History</div>',unsafe_allow_html=True)
         history=get_match_history()
-        if not history: st.info("No completed matches yet.")
-        else:
-            for m in history:
-                t1=m.get("team1") or {}; t2=m.get("team2") or {}
-                winner=m.get("winner") or {}; court=m.get("court") or {}
-                s1=m.get("score_team1",0); s2=m.get("score_team2",0)
-                t1n=t1.get("name","?"); t2n=t2.get("name","?"); wn=winner.get("name","?")
-                stage_map={"group":"Group","semifinal":"Semi","third_place":"3rd","final":"Final"}
-                st.markdown(
-                    f'<div class="history-card">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                    f'<div><div style="font-size:15px;font-weight:700">{t1n} <span style="color:#cbd5e1">vs</span> {t2n}</div>'
-                    f'<div style="font-size:11px;color:#64748b">{stage_map.get(m.get("stage",""),"?")} · {court.get("name","?")} · Match {m["match_number"]}</div></div>'
-                    f'<div style="text-align:right"><div style="font-family:Inter;font-size:22px;font-weight:900">{s1}—{s2}</div>'
-                    f'<div style="font-size:12px;color:#15803d;font-weight:700">🏆 {wn}</div></div></div>',
-                    unsafe_allow_html=True
-                )
-                moments=get_moments(m["id"])
-                if moments:
-                    icons_map={"good_shot":"🎯","great_rally":"🔥","crazy_comeback":"⚡"}
-                    css_map={"good_shot":"m-good","great_rally":"m-rally","crazy_comeback":"m-comeback"}
-                    mom_html="".join([
-                        f'<span class="moment-chip {css_map.get(mm["moment_type"],"m-good")}">{icons_map.get(mm["moment_type"],"🏓")} {(mm.get("team") or {}).get("name","")} @{mm.get("score_at_time","")}</span>'
-                        for mm in moments])
-                    st.markdown(f'<div style="margin-top:6px">{mom_html}</div>',unsafe_allow_html=True)
-                st.markdown("</div>",unsafe_allow_html=True)
+        st.caption(f"{len(history)} matches completed")
+        render_history_tiles(history)
 
 # ─── Init ─────────────────────────────────────────────────────────────────────
 if "user" not in st.session_state: st.session_state.user=None
