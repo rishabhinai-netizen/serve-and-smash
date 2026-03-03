@@ -38,6 +38,9 @@ div[data-testid="stDecoration"]{display:none;}
 .ref-score-row{display:flex !important;flex-direction:row !important;gap:10px;align-items:stretch;margin-bottom:14px;}
 .ref-score-row .sbox{flex:1;min-width:0;}
 .ref-score-sep{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0;}
+/* Force Streamlit columns to stay side-by-side on mobile */
+@media(max-width:768px){[data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;}
+[data-testid="stHorizontalBlock"]>div{min-width:0 !important;flex:1 !important;}}
 .court-hdr{font-size:12px;font-weight:800;color:#2563eb;letter-spacing:2px;text-transform:uppercase;margin:16px 0 8px;padding-bottom:6px;border-bottom:2px solid #eff6ff;}
 .sbox{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:18px;text-align:center;}
 .sbox-name{font-size:12px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;}
@@ -220,12 +223,22 @@ def add_score(mid, field, s1, s2, t1id, t2id, history):
     ns1 = s1+(1 if field=="score_team1" else 0)
     ns2 = s2+(1 if field=="score_team2" else 0)
     hist2 = list(history)+[{"t1":s1,"t2":s2}]
-    won = ns1>=15 or ns2>=15
-    wid = (t1id if ns1>=15 else t2id) if won else None
+    # Score can reach 15 — match stays LIVE until referee clicks End Game
+    reached15 = ns1>=15 or ns2>=15
+    wid = (t1id if ns1>=15 else t2id) if reached15 else None
     payload = {"score_team1":ns1,"score_team2":ns2,"score_history":json.dumps(hist2)}
-    if won: payload["winner_id"]=wid; payload["status"]="completed"
+    if reached15 and wid: payload["winner_id"]=wid  # store but keep live
     get_db().table("matches").update(payload).eq("id",mid).execute()
-    return won, wid, ns1, ns2
+    return reached15, wid, ns1, ns2
+
+def end_game(mid):
+    """Lock a match as completed — referee taps End Game after 15 is reached."""
+    m = get_db().table("matches").select(
+        "score_team1,score_team2,team1_id,team2_id,winner_id"
+    ).eq("id",mid).execute().data[0]
+    s1=m["score_team1"]; s2=m["score_team2"]
+    wid = m.get("winner_id") or (m["team1_id"] if s1>s2 else m["team2_id"])
+    get_db().table("matches").update({"status":"completed","winner_id":wid}).eq("id",mid).execute()
 
 def undo_score(mid, history):
     if not history: return
@@ -410,6 +423,17 @@ def get_vote_results():
 def get_revealed():
     r = get_db().table("award_results_revealed").select("revealed").eq("id",1).execute()
     return r.data[0]["revealed"] if r.data else False
+
+def count_all_matches():
+    """Returns (total, completed) across all match stages."""
+    all_m = get_db().table("matches").select("id,status").execute().data
+    done = sum(1 for m in all_m if m["status"] == "completed")
+    return len(all_m), done
+
+def is_tournament_complete():
+    """All 25 matches done: 21 group + 4 knockout."""
+    total, done = count_all_matches()
+    return total >= 25 and done == total
 
 def set_revealed(val):
     get_db().table("award_results_revealed").update({"revealed":val}).eq("id",1).execute()
@@ -716,6 +740,67 @@ def show_win_celebration(winner_name):
     <style>@keyframes popIn{{from{{transform:scale(.6);opacity:0}}to{{transform:scale(1);opacity:1}}}}</style>
     """, unsafe_allow_html=True)
 
+
+def page_spectator():
+    """Public read-only view: Live scores, Schedule, Standings, Knockout."""
+    tabs=st.tabs(["🔴 Live Scores","📅 Schedule","🏆 Standings","🥊 Knockout","📜 History"])
+
+    with tabs[0]:
+        st.markdown('<div class="stitle">🔴 Live Scores & Highlights</div>',unsafe_allow_html=True)
+        render_live_scores_widget(auto_refresh=True)
+
+    with tabs[1]:
+        st.markdown('<div class="stitle">📅 Full Schedule</div>',unsafe_allow_html=True)
+        all_m=get_matches()
+        if not all_m: st.info("Schedule not generated yet.")
+        else:
+            done=sum(1 for m in all_m if m["status"]=="completed")
+            live=sum(1 for m in all_m if m["status"]=="live")
+            c1,c2,c3=st.columns(3); c1.metric("Total",len(all_m)); c2.metric("Done",done); c3.metric("Live",live)
+            st.markdown("---"); render_schedule_by_court(all_m)
+
+    with tabs[2]:
+        st.markdown('<div class="stitle">🏆 Standings</div>',unsafe_allow_html=True)
+        rows=get_leaderboard()
+        if not rows: st.info("No data yet.")
+        else: render_leaderboard(rows)
+
+    with tabs[3]:
+        st.markdown('<div class="stitle">🥊 Knockout Stage</div>',unsafe_allow_html=True)
+        all_sf=get_matches("semifinal"); all_tp=get_matches("third_place"); fn=get_matches("final")
+        if not any([all_sf,all_tp,fn]):
+            st.info("Knockout stage not started yet. Check back after group stage.")
+        else:
+            match_a=all_sf[0] if len(all_sf)>=1 else None
+            match_b=all_tp[0] if all_tp else None
+            match_c=all_sf[1] if len(all_sf)>=2 else None
+            if match_a or match_b:
+                ca,cb=st.columns(2)
+                with ca:
+                    if match_a: render_bracket([match_a],"Match A — 1st vs 2nd")
+                with cb:
+                    if match_b: render_bracket([match_b],"Match B — 3rd vs 4th")
+            if match_c:
+                st.markdown("<br>",unsafe_allow_html=True)
+                render_bracket([match_c],"Match C — Qualifier")
+            if fn:
+                st.markdown("<br>",unsafe_allow_html=True)
+                render_bracket(fn,"Grand Final 🏆")
+                if all(m["status"]=="completed" for m in fn):
+                    w=(fn[0].get("winner") or {}).get("name","")
+                    if w:
+                        st.markdown(
+                            f'<div class="match-complete"><div class="mc-label">🏆 Tournament Champion 🏆</div>'+
+                            f'<div class="mc-winner">{w}</div><div style="font-size:36px;margin-top:10px">🏓🎉🏆</div></div>',
+                            unsafe_allow_html=True
+                        )
+
+    with tabs[4]:
+        st.markdown('<div class="stitle">📜 Match History</div>',unsafe_allow_html=True)
+        history=get_match_history()
+        st.caption(f"{len(history)} matches completed")
+        render_history_tiles(history)
+
 # ─── PAGES ────────────────────────────────────────────────────────────────────
 
 def page_signup(state, counts):
@@ -878,9 +963,11 @@ def page_admin(state):
 
     with tabs[5]:
         st.markdown('<div class="stitle">🥊 Knockout</div>',unsafe_allow_html=True)
-        if not state["group_stage_complete"]:
-            all_g=get_matches("group"); done=sum(1 for m in all_g if m["status"]=="completed")
-            st.warning(f"Group stage not complete. ({done}/21 done)")
+        all_g_ko=get_matches("group"); group_done_cnt=sum(1 for m in all_g_ko if m["status"]=="completed")
+        if group_done_cnt==21 and not state.get("group_stage_complete"):
+            update_state(group_stage_complete=True); state["group_stage_complete"]=True
+        if not state.get("group_stage_complete") and group_done_cnt<21:
+            st.warning(f"Group stage not complete. ({group_done_cnt}/21 done)")
         else:
             all_sf=get_matches("semifinal")   # Match A (1v2) then later Match C (qualifier)
             all_tp=get_matches("third_place") # Match B (3v4)
@@ -1098,8 +1185,12 @@ def page_referee(user):
 
     if status=="completed":
         w=match.get("winner") or {}
-        show_win_celebration(w.get("name","?"))
-        st.markdown(f'<div style="text-align:center;font-size:18px;font-weight:700;color:#94a3b8;margin-top:8px">Final Score: {s1} — {s2}</div>',unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="match-complete"><div class="mc-label">Match Complete</div>'
+            f'<div class="mc-winner">🏆 {w.get("name","?")} Wins!</div>'
+            f'<div class="mc-score">{s1} — {s2}</div></div>',
+            unsafe_allow_html=True
+        )
         if match.get("stage")=="group" and check_group_done(): update_state(group_stage_complete=True)
         moments=get_moments(match["id"])
         if moments:
@@ -1141,52 +1232,74 @@ def page_referee(user):
 
     undo_key=f"undone_{match['id']}"
     already_undone=st.session_state.get(undo_key,False)
-
-    # Instruction label
-    st.markdown('<p style="text-align:center;font-size:12px;color:#64748b;font-weight:600;letter-spacing:1.2px;margin:0 0 8px">TAP A SCORE TO ADD A POINT</p>',unsafe_allow_html=True)
-
-    # Two big tappable score columns — each shows team name + current score
-    sc1,sc2=st.columns(2)
     t1name=t1.get("name","Team 1"); t2name=t2.get("name","Team 2")
-    with sc1:
-        st.markdown(
-            f'<div style="background:#fff;border:2px solid #e2e8f0;border-top:4px solid #dc2626;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-            f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t1name}</div>'+
-            f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#dc2626">{s1}</div>'+
-            f'<div style="font-size:10px;color:#94a3b8;margin-top:4px">tap button below to add point</div></div>',
-            unsafe_allow_html=True
-        )
-        if st.button(f"+ Point for {t1name}",type="primary",use_container_width=True,key="pt1"):
-            st.session_state[undo_key]=False
-            won,_,ns1,ns2=add_score(match["id"],"score_team1",s1,s2,t1.get("id"),t2.get("id"),history)
-            if won: st.session_state["celebrate"]=t1name
-            st.rerun()
-    with sc2:
-        st.markdown(
-            f'<div style="background:#fff;border:2px solid #e2e8f0;border-top:4px solid #1d4ed8;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
-            f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t2name}</div>'+
-            f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#1d4ed8">{s2}</div>'+
-            f'<div style="font-size:10px;color:#94a3b8;margin-top:4px">tap button below to add point</div></div>',
-            unsafe_allow_html=True
-        )
-        if st.button(f"+ Point for {t2name}",type="secondary",use_container_width=True,key="pt2"):
-            st.session_state[undo_key]=False
-            won,_,ns1,ns2=add_score(match["id"],"score_team2",s1,s2,t1.get("id"),t2.get("id"),history)
-            if won: st.session_state["celebrate"]=t2name
-            st.rerun()
+    reached15 = s1>=15 or s2>=15
+    winner_id_now = match.get("winner_id") or (match.get("winner") or {}).get("id")
+    winner_name_now = t1name if winner_id_now==t1.get("id") else t2name
 
-    # Check if celebration was triggered by a score button
+    # ── Side-by-side score display (HTML flex — always horizontal) ──
+    sc_color1 = "#dc2626" if s1>=15 else "#dc2626"
+    sc_color2 = "#1d4ed8" if s2>=15 else "#1d4ed8"
+    st.markdown(
+        f'<div class="ref-score-row">'
+        f'<div style="flex:1;background:#fff;border:2px solid {"#16a34a" if s1>=15 else "#e2e8f0"};border-top:4px solid #dc2626;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+        f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t1name}</div>'
+        f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#dc2626">{s1}{" 🏆" if s1>=15 else ""}</div></div>'
+        f'<div class="ref-score-sep"><div style="font-size:13px;font-weight:900;color:#ef4444">●</div>'
+        f'<div style="font-size:9px;color:#94a3b8;margin-top:2px;letter-spacing:1px">TO 15</div></div>'
+        f'<div style="flex:1;background:#fff;border:2px solid {"#16a34a" if s2>=15 else "#e2e8f0"};border-top:4px solid #1d4ed8;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
+        f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t2name}</div>'
+        f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#1d4ed8">{s2}{" 🏆" if s2>=15 else ""}</div></div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    if reached15:
+        # 15 reached — show game-point banner + End Game button
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,#14532d,#16a34a);color:#fff;border-radius:12px;'
+            f'padding:16px;text-align:center;margin:10px 0">'
+            f'<div style="font-size:11px;font-weight:700;letter-spacing:3px;color:#bbf7d0;text-transform:uppercase">Game Point!</div>'
+            f'<div style="font-family:Inter,sans-serif;font-size:22px;font-weight:900;margin-top:4px">🏆 {winner_name_now} — {max(s1,s2)} : {min(s1,s2)}</div>'
+            f'<div style="font-size:12px;color:rgba(255,255,255,.8);margin-top:6px">Undo if needed, then click End Game to lock score.</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        eg_col,undo_col2=st.columns([2,1])
+        with eg_col:
+            if st.button("🔒 End Game — Lock Score",type="primary",use_container_width=True,key="endgame"):
+                end_game(match["id"])
+                if match.get("stage")=="group" and check_group_done(): update_state(group_stage_complete=True)
+                st.session_state["celebrate"]=winner_name_now
+                st.rerun()
+        with undo_col2:
+            if st.button("↩️ Undo",use_container_width=True,key="undo_at15",
+                         disabled=len(history)==0 or already_undone):
+                undo_score(match["id"],history); st.session_state[undo_key]=True; st.rerun()
+        if already_undone: st.caption("↩️ Undo used — score a point to re-enable")
+    else:
+        # Normal scoring
+        st.markdown('<p style="text-align:center;font-size:12px;color:#64748b;font-weight:600;letter-spacing:1.2px;margin:8px 0 6px">TAP BUTTON TO ADD A POINT</p>',unsafe_allow_html=True)
+        sc1,sc2=st.columns(2)
+        with sc1:
+            if st.button(f"+ Point for {t1name}",type="primary",use_container_width=True,key="pt1"):
+                st.session_state[undo_key]=False
+                add_score(match["id"],"score_team1",s1,s2,t1.get("id"),t2.get("id"),history); st.rerun()
+        with sc2:
+            if st.button(f"+ Point for {t2name}",type="secondary",use_container_width=True,key="pt2"):
+                st.session_state[undo_key]=False
+                add_score(match["id"],"score_team2",s1,s2,t1.get("id"),t2.get("id"),history); st.rerun()
+        undo_col,_=st.columns([1,2])
+        with undo_col:
+            if st.button("↩️ Undo last point",use_container_width=True,key="undo_pt",
+                         disabled=len(history)==0 or already_undone):
+                undo_score(match["id"],history); st.session_state[undo_key]=True; st.rerun()
+        if already_undone: st.caption("↩️ Undo used — score a point to re-enable")
+
+    # Celebration fires after End Game
     if st.session_state.get("celebrate"):
         _winner=st.session_state.pop("celebrate")
         show_win_celebration(_winner)
-
-    # Undo — separate row below score boxes
-    undo_col,_=st.columns([1,2])
-    with undo_col:
-        if st.button("↩️ Undo last point",use_container_width=True,key="undo_pt",
-                     disabled=len(history)==0 or already_undone):
-            undo_score(match["id"],history); st.session_state[undo_key]=True; st.rerun()
-    if already_undone: st.caption("↩️ Undo used — score a point to re-enable")
 
     st.markdown("<br>",unsafe_allow_html=True)
     pc1,pc2=st.columns(2)
@@ -1277,9 +1390,9 @@ def page_player(user):
     with tabs[4]:
         st.markdown('<div class="stitle">🏅 Awards & Voting</div>',unsafe_allow_html=True)
         revealed=get_revealed()
-        # Check if all matches are done — voting only opens after group stage complete
-        state_now=get_state()
-        all_matches_done=state_now.get("group_stage_complete",False)
+        # Awards gate: entire tournament (25 matches) must be complete
+        tournament_done=is_tournament_complete()
+        total_m,done_m=count_all_matches()
         if revealed:
             st.success("🎉 Results are out!")
             results=get_vote_results()
@@ -1294,17 +1407,14 @@ def page_player(user):
                 if winner:
                     st.markdown(f'<div class="award-winner-box"><div style="font-size:11px;font-weight:700;color:#92400e;letter-spacing:2px;text-transform:uppercase">🏅 WINNER</div><div class="award-winner-name">🏆 {winner}</div></div>',unsafe_allow_html=True)
                 st.markdown("</div>",unsafe_allow_html=True)
-        elif not all_matches_done:
-            # Count remaining
-            all_g=get_matches("group")
-            done_count=sum(1 for m in all_g if m["status"]=="completed")
-            remaining=len(all_g)-done_count
+        elif not tournament_done:
+            remaining=total_m-done_m
             st.markdown(
                 f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:20px;text-align:center;margin:12px 0">'
                 f'<div style="font-size:28px;margin-bottom:8px">🔒</div>'
                 f'<div style="font-size:16px;font-weight:800;color:#92400e;margin-bottom:6px">Voting Not Open Yet</div>'
-                f'<div style="font-size:14px;color:#b45309">Awards open after all group matches are completed.</div>'
-                f'<div style="font-size:13px;color:#64748b;margin-top:8px">{done_count}/{len(all_g)} matches done · {remaining} remaining</div>'
+                f'<div style="font-size:14px;color:#b45309">Awards open after the full tournament (all 25 matches) is complete.</div>'
+                f'<div style="font-size:13px;color:#64748b;margin-top:8px">{done_m}/{total_m} matches done · {remaining} remaining</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -1372,6 +1482,22 @@ with st.sidebar:
         unsafe_allow_html=True
     )
     st.markdown("---")
+    # QR Code for easy sharing
+    _app_url = "https://serveandsmashseries.streamlit.app"
+    try:
+        _req_url = st.context.headers.get("host","") if hasattr(st,"context") else ""
+        if _req_url and not _app_url: _app_url = f"https://{_req_url}"
+    except: pass
+    with st.expander("📱 Share App — QR Code",expanded=False):
+        components.html(f"""
+        <div style="text-align:center;padding:8px">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+        <div id="qr" style="display:inline-block;margin:8px auto"></div>
+        <div style="font-size:11px;color:#64748b;margin-top:8px;word-break:break-all">{_app_url}</div>
+        <script>new QRCode(document.getElementById("qr"),{{text:"{_app_url}",width:180,height:180,colorDark:"#0f172a",colorLight:"#ffffff"}});</script>
+        </div>
+        """, height=240)
+    st.markdown("---")
     if st.session_state.user:
         u=st.session_state.user
         icons={"player":"🏓","referee":"🎯","admin":"⚙️"}
@@ -1389,6 +1515,10 @@ st.markdown(
 
 user=st.session_state.user
 if user is None:
+    # ── Public spectator view — no login needed ──
+    page_spectator()
+    st.markdown("---")
+    st.markdown('<div style="text-align:center;font-size:12px;color:#94a3b8;margin-bottom:4px">Participants: Sign up or log in below</div>',unsafe_allow_html=True)
     ta,tb=st.tabs(["📝 Sign Up","🔐 Login"])
     with ta: page_signup(_state,_counts)
     with tb: page_login()
