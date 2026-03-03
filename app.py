@@ -55,7 +55,7 @@ div[data-testid="stDecoration"]{display:none;}
   padding:10px 12px;background:#fff;border:1px solid #e2e8f0;border-top:none;font-size:13px;align-items:center;}
 .lb-row:last-child{border-radius:0 0 8px 8px;}
 .lb-row.qual{border-left:3px solid #f59e0b;background:#fffbeb;}
-.lb-row.mine{background:#eff6ff;border-left:3px solid #2563eb;}
+.lb-row.mine{background:#dcfce7;border-left:4px solid #16a34a;}
 .bracket-match{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.06);margin-bottom:12px;}
 .bracket-hdr{background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:8px 14px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;}
 .bracket-team{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:700;color:#0f172a;}
@@ -250,6 +250,14 @@ def get_top4():
     return rows[:4], rows[4:]
 
 def create_semis(top4):
+    """
+    New knockout format:
+    Match A (stage=semifinal):  1st vs 2nd  → winner goes straight to Grand Final
+    Match B (stage=third_place): 3rd vs 4th  → loser is eliminated
+    Match C (stage=final): loser of A vs winner of B → winner goes to Grand Final
+    Grand Final: winner of A vs winner of C
+    Matches A and B are created now. C and GF created after both are done.
+    """
     courts = get_courts()
     c2 = next(c for c in courts if c["name"]=="Court 2")
     c3 = next(c for c in courts if c["name"]=="Court 3")
@@ -258,31 +266,46 @@ def create_semis(top4):
     bn = mn.data[0]["match_number"] if mn.data else 21
     bo = mo.data[0]["match_order"] if mo.data else 21
     get_db().table("matches").insert([
-        {"match_number":bn+1,"stage":"semifinal","team1_id":top4[0]["id"],"team2_id":top4[3]["id"],
+        # Match A: 1st vs 2nd — winner is direct finalist
+        {"match_number":bn+1,"stage":"semifinal","team1_id":top4[0]["id"],"team2_id":top4[1]["id"],
          "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+1},
-        {"match_number":bn+2,"stage":"semifinal","team1_id":top4[1]["id"],"team2_id":top4[2]["id"],
+        # Match B: 3rd vs 4th — loser is out, winner gets one more chance
+        {"match_number":bn+2,"stage":"third_place","team1_id":top4[2]["id"],"team2_id":top4[3]["id"],
          "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+2},
     ]).execute()
 
-def create_finals(sf):
+def create_qualifier(sf_match, tp_match):
+    """
+    Match C: loser of Match A vs winner of Match B.
+    Winner of this qualifier reaches the Grand Final.
+    """
     courts = get_courts()
     c2 = next(c for c in courts if c["name"]=="Court 2")
+    mn = get_db().table("matches").select("match_number").order("match_number",desc=True).limit(1).execute()
+    mo = get_db().table("matches").select("match_order").order("match_order",desc=True).limit(1).execute()
+    bn = mn.data[0]["match_number"]; bo = mo.data[0]["match_order"]
+    def loser_id(m):
+        t1=(m.get("team1") or {}).get("id"); t2=(m.get("team2") or {}).get("id")
+        w=m.get("winner_id") or (m.get("winner") or {}).get("id")
+        return t1 if w==t2 else t2
+    def winner_id(m):
+        return m.get("winner_id") or (m.get("winner") or {}).get("id")
+    get_db().table("matches").insert([
+        {"match_number":bn+1,"stage":"semifinal",  # reuse semifinal stage for display
+         "team1_id":loser_id(sf_match),"team2_id":winner_id(tp_match),
+         "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+1},
+    ]).execute()
+
+def create_finals(sf_winner_id, qualifier_winner_id):
+    """Create the Grand Final: winner of Match A vs winner of Match C."""
+    courts = get_courts()
     c3 = next(c for c in courts if c["name"]=="Court 3")
     mn = get_db().table("matches").select("match_number").order("match_number",desc=True).limit(1).execute()
     mo = get_db().table("matches").select("match_order").order("match_order",desc=True).limit(1).execute()
     bn = mn.data[0]["match_number"]; bo = mo.data[0]["match_order"]
-    sfs = sorted(sf,key=lambda x:x["match_number"])
-    def loser(m):
-        t1=(m.get("team1") or {}).get("id"); t2=(m.get("team2") or {}).get("id")
-        w=m.get("winner_id") or (m.get("winner") or {}).get("id")
-        return t1 if w==t2 else t2
-    def winner(m):
-        return m.get("winner_id") or (m.get("winner") or {}).get("id")
     get_db().table("matches").insert([
-        {"match_number":bn+1,"stage":"third_place","team1_id":loser(sfs[0]),"team2_id":loser(sfs[1]),
-         "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+1},
-        {"match_number":bn+2,"stage":"final","team1_id":winner(sfs[0]),"team2_id":winner(sfs[1]),
-         "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+2},
+        {"match_number":bn+1,"stage":"final","team1_id":sf_winner_id,"team2_id":qualifier_winner_id,
+         "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+1},
     ]).execute()
 
 def add_moment(match_id, mtype, team_id, score_str):
@@ -351,7 +374,9 @@ def resolve_dispute(dispute_id, match_id, undo):
 
 # Awards / Voting
 def get_award_categories():
-    return get_db().table("award_categories").select("*").order("created_at").execute().data
+    EXCLUDED = {"Best Dressed", "Fan Favourite", "Fan Favorite"}
+    rows = get_db().table("award_categories").select("*").order("created_at").execute().data
+    return [r for r in rows if r.get("name") not in EXCLUDED]
 
 def get_my_votes(user_id):
     r = get_db().table("award_votes").select("category_id,voted_team_id").eq("voter_id",user_id).execute()
@@ -444,11 +469,10 @@ def render_leaderboard(rows, my_team_name=None):
         dc="#15803d" if diff>0 else "#dc2626" if diff<0 else "#64748b"
         is_mine=my_team_name and row["team_name"]==my_team_name
         cls="mine" if is_mine else ("qual" if pos<=4 else "")
-        star=" ⭐" if is_mine else ""
         st.markdown(
             f'<div class="lb-row {cls}">'
             f'<div style="font-weight:800">{pos_icons.get(pos,str(pos))}</div>'
-            f'<div style="font-weight:700">{row["team_name"]}{star}</div>'
+            f'<div style="font-weight:700">{row["team_name"]}</div>'
             f'<div style="color:#64748b">{row["matches_played"]}</div>'
             f'<div style="color:#15803d;font-weight:700">{row["won"]}</div>'
             f'<div style="color:#dc2626">{row["lost"]}</div>'
@@ -457,7 +481,7 @@ def render_leaderboard(rows, my_team_name=None):
             f'<div style="color:{dc};font-weight:700">{ds}</div></div>',
             unsafe_allow_html=True
         )
-    st.caption("🏅 Top 4 qualify" + (" | ⭐ = Your team" if my_team_name else ""))
+    st.caption("🏅 Top 4 qualify" + (" | 🟩 = Your team" if my_team_name else ""))
 
 def render_bracket(matches, title):
     st.markdown(f'<div class="stitle">🏆 {title}</div>',unsafe_allow_html=True)
@@ -594,6 +618,8 @@ def render_history_tiles(history):
                     for mm in moments
                 ])
                 st.markdown(mom_html, unsafe_allow_html=True)
+
+def spin_wheel_html(player_names):
     colors=["#2563eb","#dc2626","#16a34a","#9333ea","#ea580c","#0891b2","#be185d","#b45309","#0f766e","#4338ca","#c2410c","#1d4ed8","#15803d","#7e22ce"]
     nj=json.dumps(player_names); cj=json.dumps(colors[:len(player_names)])
     return f"""<!DOCTYPE html><html><head>
@@ -632,6 +658,63 @@ document.getElementById('prog').textContent=rem.length>0?rem.length+' left':'✅
 setTimeout(()=>{{draw(cur);if(rem.length>0)spin();}},1100);}}requestAnimationFrame(anim);}}
 cv.addEventListener('click',spin);draw(0);
 </script></body></html>"""
+
+
+def _confetti_js():
+    """Inject a one-shot confetti burst via components.html (height=0)."""
+    components.html("""
+    <script>
+    (function(){
+        var colors=['#2563eb','#ef4444','#f59e0b','#16a34a','#9333ea','#0ea5e9','#ec4899'];
+        var body=document.body;
+        var style=document.createElement('style');
+        style.textContent=
+            '@keyframes cf1{to{transform:translateY(110vh) rotate(360deg)}}'+
+            '@keyframes cf2{to{transform:translateY(110vh) rotate(-540deg) translateX(80px)}}'+
+            '@keyframes cf3{to{transform:translateY(110vh) rotate(720deg) translateX(-60px)}}';
+        document.head.appendChild(style);
+        var wrap=document.createElement('div');
+        wrap.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999;overflow:hidden;';
+        body.appendChild(wrap);
+        for(var i=0;i<140;i++){
+            (function(i){
+                setTimeout(function(){
+                    var el=document.createElement('div');
+                    var sz=(Math.random()*10+5)+'px';
+                    var anim='cf'+(Math.floor(Math.random()*3)+1);
+                    var dur=(1.4+Math.random()*2.2).toFixed(2)+'s';
+                    el.style.cssText='position:absolute;width:'+sz+';height:'+sz+
+                        ';background:'+colors[Math.floor(Math.random()*colors.length)]+
+                        ';left:'+(Math.random()*100)+'%;top:-20px;border-radius:'+(Math.random()>.5?'50%':'3px')+
+                        ';animation:'+anim+' '+dur+' linear forwards;';
+                    wrap.appendChild(el);
+                    setTimeout(function(){el.remove();},4500);
+                }, i*20);
+            })(i);
+        }
+        setTimeout(function(){wrap.remove();},6000);
+    })();
+    </script>
+    """, height=0)
+
+def show_win_celebration(winner_name):
+    """Full match-win celebration: balloons + confetti + big winner card."""
+    st.balloons()
+    _confetti_js()
+    st.markdown(f"""
+    <div style="
+        background:linear-gradient(135deg,#0f172a 0%,#1e40af 55%,#0ea5e9 100%);
+        border-radius:20px;padding:36px 24px;text-align:center;color:#fff;
+        box-shadow:0 12px 48px rgba(30,64,175,.4);margin:16px 0;
+        animation:popIn .5s cubic-bezier(.175,.885,.32,1.275);
+    ">
+        <div style="font-size:56px;margin-bottom:8px">🏆</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:3px;color:#fbbf24;text-transform:uppercase;margin-bottom:8px">Match Winner</div>
+        <div style="font-family:'Inter',sans-serif;font-size:30px;font-weight:900;letter-spacing:-.5px">{winner_name}</div>
+        <div style="font-size:30px;margin-top:12px">🎉 🏓 🎊</div>
+    </div>
+    <style>@keyframes popIn{{from{{transform:scale(.6);opacity:0}}to{{transform:scale(1);opacity:1}}}}</style>
+    """, unsafe_allow_html=True)
 
 # ─── PAGES ────────────────────────────────────────────────────────────────────
 
@@ -799,11 +882,33 @@ def page_admin(state):
             all_g=get_matches("group"); done=sum(1 for m in all_g if m["status"]=="completed")
             st.warning(f"Group stage not complete. ({done}/21 done)")
         else:
-            sf=get_matches("semifinal"); tp=get_matches("third_place"); fn=get_matches("final")
-            if not sf:
+            all_sf=get_matches("semifinal")   # Match A (1v2) then later Match C (qualifier)
+            all_tp=get_matches("third_place") # Match B (3v4)
+            fn=get_matches("final")           # Grand Final
+
+            match_a=all_sf[0] if len(all_sf)>=1 else None
+            match_c=all_sf[1] if len(all_sf)>=2 else None
+            match_b=all_tp[0] if all_tp else None
+
+            def _wid(m):
+                return m.get("winner_id") or (m.get("winner") or {}).get("id")
+            def _lid(m):
+                t1=(m.get("team1") or {}).get("id"); t2=(m.get("team2") or {}).get("id")
+                w=_wid(m); return t1 if w==t2 else t2
+
+            if not match_a:
+                # Draw preview
                 top4,_=get_top4(); seeds=["1st 🥇","2nd 🥈","3rd 🥉","4th"]
+                st.markdown("""
+                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px;font-size:13px;line-height:1.9">
+                <b>Knockout Format:</b><br>
+                🏅 <b>Match A</b>: 1st vs 2nd — winner goes straight to Grand Final<br>
+                💥 <b>Match B</b>: 3rd vs 4th — loser is out, winner gets a second chance<br>
+                ⚔️ <b>Match C</b>: Loser of A vs Winner of B — winner earns 2nd Final spot<br>
+                🏆 <b>Grand Final</b>: Winner of A vs Winner of C
+                </div>""",unsafe_allow_html=True)
                 col1,col2=st.columns(2)
-                for col,idxs,title in [(col1,[0,3],"Semifinal 1 — Court 2"),(col2,[1,2],"Semifinal 2 — Court 3")]:
+                for col,idxs,title in [(col1,[0,1],"Match A — 1st vs 2nd"),(col2,[2,3],"Match B — 3rd vs 4th")]:
                     with col:
                         rows_html=""
                         for idx in idxs:
@@ -811,20 +916,43 @@ def page_admin(state):
                             rows_html+=f'<div class="bracket-team"><span><span class="bracket-seed">{seeds[idx]}</span>{t["team_name"]}</span><span style="font-size:12px;color:#64748b">W:{t["won"]} Diff:{ds}</span></div>'
                         st.markdown(f'<div class="bracket-match"><div class="bracket-hdr">{title}</div>{rows_html}</div>',unsafe_allow_html=True)
                 st.markdown("<br>",unsafe_allow_html=True)
-                if st.button("🥊 Create Semis",type="primary"): create_semis(top4); update_state(phase="semifinals"); st.rerun()
+                if st.button("🥊 Create Knockout Matches",type="primary"):
+                    create_semis(top4); update_state(phase="semifinals"); st.rerun()
             else:
-                render_bracket(sf,"Semifinals")
-                sf_done=all(m["status"]=="completed" for m in sf)
-                if sf_done and not tp and not fn:
-                    if st.button("🏆 Create Final & 3rd Place",type="primary"):
-                        create_finals(sf); update_state(semifinals_complete=True,phase="final"); st.rerun()
-                if tp: st.markdown("<br>",unsafe_allow_html=True); render_bracket(tp,"3rd Place 🥉")
+                col_a,col_b=st.columns(2)
+                with col_a: render_bracket([match_a],"Match A — 1st vs 2nd")
+                with col_b:
+                    if match_b: render_bracket([match_b],"Match B — 3rd vs 4th")
+
+                a_done=match_a["status"]=="completed"
+                b_done=match_b and match_b["status"]=="completed"
+
+                if a_done and b_done and not match_c and not fn:
+                    loser_a_name=(match_a.get("team1") or {}).get("name","?") if _wid(match_a)==(match_a.get("team2") or {}).get("id") else (match_a.get("team2") or {}).get("name","?")
+                    winner_b_name=(match_b.get("winner") or {}).get("name","?")
+                    st.markdown("<br>",unsafe_allow_html=True)
+                    st.info(f"⚔️ Match C ready: **{loser_a_name}** vs **{winner_b_name}**")
+                    if st.button("⚔️ Create Match C — Qualifier",type="primary"):
+                        create_qualifier(match_a,match_b); update_state(phase="qualifier"); st.rerun()
+
+                if match_c:
+                    st.markdown("<br>",unsafe_allow_html=True)
+                    render_bracket([match_c],"Match C — Qualifier")
+                    c_done=match_c["status"]=="completed"
+                    if a_done and c_done and not fn:
+                        sf_wname=(match_a.get("winner") or {}).get("name","?")
+                        q_wname=(match_c.get("winner") or {}).get("name","?")
+                        st.markdown("<br>",unsafe_allow_html=True)
+                        st.info(f"🏆 Grand Final: **{sf_wname}** vs **{q_wname}**")
+                        if st.button("🏆 Create Grand Final",type="primary"):
+                            create_finals(_wid(match_a),_wid(match_c)); update_state(semifinals_complete=True,phase="final"); st.rerun()
+
                 if fn:
                     st.markdown("<br>",unsafe_allow_html=True); render_bracket(fn,"Grand Final 🏆")
                     if all(m["status"]=="completed" for m in fn):
                         w=(fn[0].get("winner") or {}).get("name","")
                         if w:
-                            st.balloons()
+                            show_win_celebration(f"🏆 Tournament Champion: {w}")
                             st.markdown(f'<div class="match-complete"><div class="mc-label">🏆 Tournament Champion 🏆</div><div class="mc-winner">{w}</div><div style="font-size:36px;margin-top:10px">🏓🎉🏆</div></div>',unsafe_allow_html=True)
                             update_state(phase="completed")
 
@@ -970,8 +1098,8 @@ def page_referee(user):
 
     if status=="completed":
         w=match.get("winner") or {}
-        st.markdown(f'<div class="match-complete"><div class="mc-label">Match Complete</div><div class="mc-winner">🏆 {w.get("name","?")} Wins!</div><div class="mc-score">{s1} — {s2}</div></div>',unsafe_allow_html=True)
-        st.balloons()
+        show_win_celebration(w.get("name","?"))
+        st.markdown(f'<div style="text-align:center;font-size:18px;font-weight:700;color:#94a3b8;margin-top:8px">Final Score: {s1} — {s2}</div>',unsafe_allow_html=True)
         if match.get("stage")=="group" and check_group_done(): update_state(group_stage_complete=True)
         moments=get_moments(match["id"])
         if moments:
@@ -1013,22 +1141,51 @@ def page_referee(user):
 
     undo_key=f"undone_{match['id']}"
     already_undone=st.session_state.get(undo_key,False)
-    b1,bundo,b2=st.columns([4,2,4])
-    with b1:
-        if st.button(f"➕ +1 → {t1.get('name','T1')}",type="primary",use_container_width=True,key="pt1"):
+
+    # Instruction label
+    st.markdown('<p style="text-align:center;font-size:12px;color:#64748b;font-weight:600;letter-spacing:1.2px;margin:0 0 8px">TAP A SCORE TO ADD A POINT</p>',unsafe_allow_html=True)
+
+    # Two big tappable score columns — each shows team name + current score
+    sc1,sc2=st.columns(2)
+    t1name=t1.get("name","Team 1"); t2name=t2.get("name","Team 2")
+    with sc1:
+        st.markdown(
+            f'<div style="background:#fff;border:2px solid #e2e8f0;border-top:4px solid #dc2626;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
+            f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t1name}</div>'+
+            f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#dc2626">{s1}</div>'+
+            f'<div style="font-size:10px;color:#94a3b8;margin-top:4px">tap button below to add point</div></div>',
+            unsafe_allow_html=True
+        )
+        if st.button(f"+ Point for {t1name}",type="primary",use_container_width=True,key="pt1"):
             st.session_state[undo_key]=False
             won,_,ns1,ns2=add_score(match["id"],"score_team1",s1,s2,t1.get("id"),t2.get("id"),history)
-            if won: st.balloons()
+            if won: st.session_state["celebrate"]=t1name
             st.rerun()
-    with bundo:
-        if st.button("↩️ Undo",use_container_width=True,key="undo_pt",disabled=len(history)==0 or already_undone):
-            undo_score(match["id"],history); st.session_state[undo_key]=True; st.rerun()
-    with b2:
-        if st.button(f"➕ +1 → {t2.get('name','T2')}",type="secondary",use_container_width=True,key="pt2"):
+    with sc2:
+        st.markdown(
+            f'<div style="background:#fff;border:2px solid #e2e8f0;border-top:4px solid #1d4ed8;border-radius:14px;padding:14px 10px;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.06)">'+
+            f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t2name}</div>'+
+            f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#1d4ed8">{s2}</div>'+
+            f'<div style="font-size:10px;color:#94a3b8;margin-top:4px">tap button below to add point</div></div>',
+            unsafe_allow_html=True
+        )
+        if st.button(f"+ Point for {t2name}",type="secondary",use_container_width=True,key="pt2"):
             st.session_state[undo_key]=False
             won,_,ns1,ns2=add_score(match["id"],"score_team2",s1,s2,t1.get("id"),t2.get("id"),history)
-            if won: st.balloons()
+            if won: st.session_state["celebrate"]=t2name
             st.rerun()
+
+    # Check if celebration was triggered by a score button
+    if st.session_state.get("celebrate"):
+        _winner=st.session_state.pop("celebrate")
+        show_win_celebration(_winner)
+
+    # Undo — separate row below score boxes
+    undo_col,_=st.columns([1,2])
+    with undo_col:
+        if st.button("↩️ Undo last point",use_container_width=True,key="undo_pt",
+                     disabled=len(history)==0 or already_undone):
+            undo_score(match["id"],history); st.session_state[undo_key]=True; st.rerun()
     if already_undone: st.caption("↩️ Undo used — score a point to re-enable")
 
     st.markdown("<br>",unsafe_allow_html=True)
