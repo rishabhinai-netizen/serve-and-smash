@@ -162,6 +162,23 @@ def get_all_users():
 def get_state():
     return get_db().table("tournament_state").select("*").eq("id",1).execute().data[0]
 
+def reset_all_data():
+    """Nuclear reset: clears all tournament data, keeps courts intact."""
+    db = get_db()
+    db.table("award_votes").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("match_moments").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("match_disputes").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("matches").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("teams").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("users").delete().neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("award_results_revealed").update({"revealed":False}).eq("id",1).execute()
+    db.table("courts").update({"referee_id":None}).neq("id","00000000-0000-0000-0000-000000000000").execute()
+    db.table("tournament_state").update({
+        "phase":"signup","signups_frozen":False,"teams_assigned":False,
+        "schedule_generated":False,"group_stage_complete":False,
+        "semifinals_complete":False
+    }).eq("id",1).execute()
+
 def update_state(**kw):
     get_db().table("tournament_state").update(kw).eq("id",1).execute()
 
@@ -279,12 +296,12 @@ def create_semis(top4):
     bn = mn.data[0]["match_number"] if mn.data else 21
     bo = mo.data[0]["match_order"] if mo.data else 21
     get_db().table("matches").insert([
-        # Match A: 1st vs 2nd — winner is direct finalist
+        # SF1: 1st vs 2nd — winner goes to Grand Final (Court 3)
         {"match_number":bn+1,"stage":"semifinal","team1_id":top4[0]["id"],"team2_id":top4[1]["id"],
-         "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+1},
-        # Match B: 3rd vs 4th — loser is out, winner gets one more chance
+         "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+1},
+        # SF2: 3rd vs 4th — loser eliminated (Court 2)
         {"match_number":bn+2,"stage":"third_place","team1_id":top4[2]["id"],"team2_id":top4[3]["id"],
-         "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+2},
+         "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+2},
     ]).execute()
 
 def create_qualifier(sf_match, tp_match):
@@ -293,7 +310,7 @@ def create_qualifier(sf_match, tp_match):
     Winner of this qualifier reaches the Grand Final.
     """
     courts = get_courts()
-    c2 = next(c for c in courts if c["name"]=="Court 2")
+    c3 = next(c for c in courts if c["name"]=="Court 3")
     mn = get_db().table("matches").select("match_number").order("match_number",desc=True).limit(1).execute()
     mo = get_db().table("matches").select("match_order").order("match_order",desc=True).limit(1).execute()
     bn = mn.data[0]["match_number"]; bo = mo.data[0]["match_order"]
@@ -304,9 +321,9 @@ def create_qualifier(sf_match, tp_match):
     def winner_id(m):
         return m.get("winner_id") or (m.get("winner") or {}).get("id")
     get_db().table("matches").insert([
-        {"match_number":bn+1,"stage":"semifinal",  # reuse semifinal stage for display
+        {"match_number":bn+1,"stage":"qualifier",
          "team1_id":loser_id(sf_match),"team2_id":winner_id(tp_match),
-         "court_id":c2["id"],"referee_id":c2.get("referee_id"),"status":"pending","match_order":bo+1},
+         "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+1},
     ]).execute()
 
 def create_finals(sf_winner_id, qualifier_winner_id):
@@ -320,6 +337,46 @@ def create_finals(sf_winner_id, qualifier_winner_id):
         {"match_number":bn+1,"stage":"final","team1_id":sf_winner_id,"team2_id":qualifier_winner_id,
          "court_id":c3["id"],"referee_id":c3.get("referee_id"),"status":"pending","match_order":bo+1},
     ]).execute()
+
+def auto_advance_knockouts():
+    """
+    Called on every page load when group stage is complete.
+    Creates SF1, SF2 automatically. Then when both done → Qualifier.
+    Then when Qualifier done → Grand Final. Fully automatic, no admin clicks needed.
+    """
+    try:
+        all_sf = get_db().table("matches").select("*,team1:teams!matches_team1_id_fkey(id,name),team2:teams!matches_team2_id_fkey(id,name),winner:teams!matches_winner_id_fkey(id,name)").eq("stage","semifinal").order("match_order").execute().data
+        all_tp = get_db().table("matches").select("*,team1:teams!matches_team1_id_fkey(id,name),team2:teams!matches_team2_id_fkey(id,name),winner:teams!matches_winner_id_fkey(id,name)").eq("stage","third_place").order("match_order").execute().data
+        all_ql = get_db().table("matches").select("*,team1:teams!matches_team1_id_fkey(id,name),team2:teams!matches_team2_id_fkey(id,name),winner:teams!matches_winner_id_fkey(id,name)").eq("stage","qualifier").order("match_order").execute().data
+        all_fn = get_db().table("matches").select("*").eq("stage","final").execute().data
+
+        match_sf1 = all_sf[0] if all_sf else None
+        match_sf2 = all_tp[0] if all_tp else None
+        match_ql  = all_ql[0] if all_ql else None
+
+        # Step 1: Create SF1 + SF2 if not yet created
+        if not match_sf1:
+            top4, _ = get_top4()
+            if len(top4) >= 4:
+                create_semis(top4)
+                update_state(phase="semifinals")
+            return  # rerun will pick up next step
+
+        # Step 2: Once SF1 and SF2 both done, create Qualifier
+        sf1_done = match_sf1["status"] == "completed"
+        sf2_done = match_sf2 and match_sf2["status"] == "completed"
+        if sf1_done and sf2_done and not match_ql and not all_fn:
+            create_qualifier(match_sf1, match_sf2)
+            return
+
+        # Step 3: Once Qualifier done, create Grand Final
+        ql_done = match_ql and match_ql["status"] == "completed"
+        if sf1_done and ql_done and not all_fn:
+            def _wid(m): return m.get("winner_id") or (m.get("winner") or {}).get("id")
+            create_finals(_wid(match_sf1), _wid(match_ql))
+            update_state(phase="final")
+    except Exception:
+        pass  # Silently skip on errors — will retry next rerun
 
 def add_moment(match_id, mtype, team_id, score_str):
     get_db().table("match_moments").insert({
@@ -462,7 +519,7 @@ def render_match_row(m):
     win_part=""
     if winner.get("name") and status=="completed":
         win_part=f'&nbsp;<span style="color:#15803d;font-size:12px;font-weight:700">🏆 {winner["name"]}</span>'
-    stage_map={"group":"","semifinal":"SEMI · ","third_place":"3RD · ","final":"FINAL · "}
+    stage_map={"group":"","semifinal":"SF1 · ","third_place":"SF2 · ","qualifier":"QUAL · ","final":"FINAL · "}
     stage_pre=stage_map.get(m.get("stage",""),"")
     court_name=court.get("name","?")
     st.markdown(
@@ -517,7 +574,7 @@ def render_bracket(matches, title):
         t1c="winner" if winner.get("id")==t1.get("id") and status=="completed" else ("loser" if status=="completed" else "")
         t2c="winner" if winner.get("id")==t2.get("id") and status=="completed" else ("loser" if status=="completed" else "")
         def sc(c): return "#15803d" if c=="winner" else "#94a3b8" if c=="loser" else "#0f172a"
-        stage_map={"semifinal":"Semifinal","third_place":"3rd Place","final":"Grand Final"}
+        stage_map={"semifinal":"Semi Final 1","third_place":"Semi Final 2","qualifier":"Qualifier","final":"Grand Final"}
         st.markdown(
             f'<div class="bracket-match">'
             f'<div class="bracket-hdr">{stage_map.get(m.get("stage",""),"Match")} · #{m["match_number"]} · {court.get("name","?")}</div>'
@@ -599,7 +656,7 @@ def render_history_tiles(history):
     icons_map={"good_shot":"🎯","great_rally":"🔥","crazy_comeback":"⚡"}
     css_map={"good_shot":"m-good","great_rally":"m-rally","crazy_comeback":"m-comeback"}
     label_map={"good_shot":"Good Shot","great_rally":"Great Rally","crazy_comeback":"Comeback!"}
-    stage_map={"group":"Group","semifinal":"Semi","third_place":"3rd Place","final":"Final"}
+    stage_map={"group":"Group","semifinal":"SF1","third_place":"SF2","qualifier":"Qualifier","final":"Final"}
 
     # Build tile grid HTML (pure HTML — always 3 cols mobile, 5 cols desktop)
     tiles_html='<div class="hist-grid">'
@@ -767,22 +824,23 @@ def page_spectator():
 
     with tabs[3]:
         st.markdown('<div class="stitle">🥊 Knockout Stage</div>',unsafe_allow_html=True)
-        all_sf=get_matches("semifinal"); all_tp=get_matches("third_place"); fn=get_matches("final")
-        if not any([all_sf,all_tp,fn]):
+        all_sf=get_matches("semifinal"); all_tp=get_matches("third_place")
+        all_ql=get_matches("qualifier"); fn=get_matches("final")
+        if not any([all_sf,all_tp,all_ql,fn]):
             st.info("Knockout stage not started yet. Check back after group stage.")
         else:
-            match_a=all_sf[0] if len(all_sf)>=1 else None
-            match_b=all_tp[0] if all_tp else None
-            match_c=all_sf[1] if len(all_sf)>=2 else None
-            if match_a or match_b:
+            match_sf1=all_sf[0] if all_sf else None
+            match_sf2=all_tp[0] if all_tp else None
+            match_ql=all_ql[0] if all_ql else None
+            if match_sf1 or match_sf2:
                 ca,cb=st.columns(2)
                 with ca:
-                    if match_a: render_bracket([match_a],"Match A — 1st vs 2nd")
+                    if match_sf1: render_bracket([match_sf1],"Semi Final 1 — 1st vs 2nd")
                 with cb:
-                    if match_b: render_bracket([match_b],"Match B — 3rd vs 4th")
-            if match_c:
+                    if match_sf2: render_bracket([match_sf2],"Semi Final 2 — 3rd vs 4th")
+            if match_ql:
                 st.markdown("<br>",unsafe_allow_html=True)
-                render_bracket([match_c],"Match C — Qualifier")
+                render_bracket([match_ql],"Qualifier")
             if fn:
                 st.markdown("<br>",unsafe_allow_html=True)
                 render_bracket(fn,"Grand Final 🏆")
@@ -816,15 +874,15 @@ def page_signup(state, counts):
     with st.form("signup",clear_on_submit=True):
         name=st.text_input("Full Name")
         mobile=st.text_input("Mobile (10 digits)",max_chars=10)
-        password=st.text_input("Password",type="password",placeholder="Min 6 chars")
-        confirm=st.text_input("Confirm Password",type="password")
+        password=st.text_input("Password (4 digits)",type="password",placeholder="4 digit PIN",max_chars=4)
+        confirm=st.text_input("Confirm Password",type="password",max_chars=4)
         role=st.selectbox("Register As",available,format_func=lambda x:{"player":"🏓 Player","referee":"🎯 Referee","admin":"⚙️ Admin"}[x])
         sub=st.form_submit_button("Register",type="primary",use_container_width=True)
     if sub:
         errs=[]
         if not name.strip(): errs.append("Name required.")
         if not mobile.isdigit() or len(mobile)!=10: errs.append("Valid 10-digit mobile required.")
-        if len(password)<6: errs.append("Password min 6 characters.")
+        if not password.isdigit() or len(password)!=4: errs.append("Password must be exactly 4 digits.")
         if password!=confirm: errs.append("Passwords don't match.")
         if errs:
             for e in errs: st.error(e)
@@ -859,6 +917,18 @@ def page_admin(state):
     with tabs[0]:
         st.markdown('<div class="stitle">🔴 Live Scores</div>',unsafe_allow_html=True)
         render_live_scores_widget(auto_refresh=True)
+
+        st.markdown("---")
+        st.markdown("**⚠️ Danger Zone**")
+        with st.expander("🔴 Reset Entire Tournament Data"):
+            st.error("This will delete ALL users, teams, matches, scores, votes. Courts and award categories are kept.")
+            confirm_reset=st.text_input("Type RESET to confirm",key="reset_confirm")
+            if st.button("🔴 Execute Full Reset",type="primary",key="do_reset"):
+                if confirm_reset=="RESET":
+                    reset_all_data(); st.session_state.user=None
+                    st.success("✅ Tournament reset complete! Redirecting…"); st.rerun()
+                else:
+                    st.error("Type RESET exactly to confirm.")
 
     with tabs[1]:
         st.markdown('<div class="stitle">👥 Participants</div>',unsafe_allow_html=True)
@@ -969,79 +1039,48 @@ def page_admin(state):
         if not state.get("group_stage_complete") and group_done_cnt<21:
             st.warning(f"Group stage not complete. ({group_done_cnt}/21 done)")
         else:
-            all_sf=get_matches("semifinal")   # Match A (1v2) then later Match C (qualifier)
-            all_tp=get_matches("third_place") # Match B (3v4)
-            fn=get_matches("final")           # Grand Final
+            # Auto-advance — creates matches as they become ready, no buttons needed
+            auto_advance_knockouts()
 
-            match_a=all_sf[0] if len(all_sf)>=1 else None
-            match_c=all_sf[1] if len(all_sf)>=2 else None
-            match_b=all_tp[0] if all_tp else None
+            all_sf=get_matches("semifinal")
+            all_tp=get_matches("third_place")
+            all_ql=get_matches("qualifier")
+            fn=get_matches("final")
 
-            def _wid(m):
-                return m.get("winner_id") or (m.get("winner") or {}).get("id")
-            def _lid(m):
-                t1=(m.get("team1") or {}).get("id"); t2=(m.get("team2") or {}).get("id")
-                w=_wid(m); return t1 if w==t2 else t2
+            match_sf1=all_sf[0] if all_sf else None
+            match_sf2=all_tp[0] if all_tp else None
+            match_ql=all_ql[0] if all_ql else None
 
-            if not match_a:
-                # Draw preview
-                top4,_=get_top4(); seeds=["1st 🥇","2nd 🥈","3rd 🥉","4th"]
-                st.markdown("""
-                <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px;font-size:13px;line-height:1.9">
-                <b>Knockout Format:</b><br>
-                🏅 <b>Match A</b>: 1st vs 2nd — winner goes straight to Grand Final<br>
-                💥 <b>Match B</b>: 3rd vs 4th — loser is out, winner gets a second chance<br>
-                ⚔️ <b>Match C</b>: Loser of A vs Winner of B — winner earns 2nd Final spot<br>
-                🏆 <b>Grand Final</b>: Winner of A vs Winner of C
-                </div>""",unsafe_allow_html=True)
-                col1,col2=st.columns(2)
-                for col,idxs,title in [(col1,[0,1],"Match A — 1st vs 2nd"),(col2,[2,3],"Match B — 3rd vs 4th")]:
-                    with col:
-                        rows_html=""
-                        for idx in idxs:
-                            t=top4[idx]; diff=t["score_diff"]; ds=("+" if diff>0 else "")+str(diff)
-                            rows_html+=f'<div class="bracket-team"><span><span class="bracket-seed">{seeds[idx]}</span>{t["team_name"]}</span><span style="font-size:12px;color:#64748b">W:{t["won"]} Diff:{ds}</span></div>'
-                        st.markdown(f'<div class="bracket-match"><div class="bracket-hdr">{title}</div>{rows_html}</div>',unsafe_allow_html=True)
-                st.markdown("<br>",unsafe_allow_html=True)
-                if st.button("🥊 Create Knockout Matches",type="primary"):
-                    create_semis(top4); update_state(phase="semifinals"); st.rerun()
-            else:
+            st.markdown("""
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;line-height:1.9">
+            <b>Knockout Format (fully automatic):</b><br>
+            🏅 <b>SF1</b>: 1st vs 2nd (Court 3) — winner → Grand Final<br>
+            💥 <b>SF2</b>: 3rd vs 4th (Court 2) — loser eliminated<br>
+            ⚔️ <b>Qualifier</b>: Loser of SF1 vs Winner of SF2 (Court 3) — winner → Grand Final<br>
+            🏆 <b>Grand Final</b>: Winner of SF1 vs Winner of Qualifier (Court 3)
+            </div>""",unsafe_allow_html=True)
+
+            if match_sf1 or match_sf2:
                 col_a,col_b=st.columns(2)
-                with col_a: render_bracket([match_a],"Match A — 1st vs 2nd")
+                with col_a:
+                    if match_sf1: render_bracket([match_sf1],"Semi Final 1 — 1st vs 2nd")
                 with col_b:
-                    if match_b: render_bracket([match_b],"Match B — 3rd vs 4th")
+                    if match_sf2: render_bracket([match_sf2],"Semi Final 2 — 3rd vs 4th")
+            else:
+                st.info("⏳ Knockout matches will appear automatically once group stage is done.")
 
-                a_done=match_a["status"]=="completed"
-                b_done=match_b and match_b["status"]=="completed"
+            if match_ql:
+                st.markdown("<br>",unsafe_allow_html=True)
+                render_bracket([match_ql],"Qualifier")
 
-                if a_done and b_done and not match_c and not fn:
-                    loser_a_name=(match_a.get("team1") or {}).get("name","?") if _wid(match_a)==(match_a.get("team2") or {}).get("id") else (match_a.get("team2") or {}).get("name","?")
-                    winner_b_name=(match_b.get("winner") or {}).get("name","?")
-                    st.markdown("<br>",unsafe_allow_html=True)
-                    st.info(f"⚔️ Match C ready: **{loser_a_name}** vs **{winner_b_name}**")
-                    if st.button("⚔️ Create Match C — Qualifier",type="primary"):
-                        create_qualifier(match_a,match_b); update_state(phase="qualifier"); st.rerun()
-
-                if match_c:
-                    st.markdown("<br>",unsafe_allow_html=True)
-                    render_bracket([match_c],"Match C — Qualifier")
-                    c_done=match_c["status"]=="completed"
-                    if a_done and c_done and not fn:
-                        sf_wname=(match_a.get("winner") or {}).get("name","?")
-                        q_wname=(match_c.get("winner") or {}).get("name","?")
-                        st.markdown("<br>",unsafe_allow_html=True)
-                        st.info(f"🏆 Grand Final: **{sf_wname}** vs **{q_wname}**")
-                        if st.button("🏆 Create Grand Final",type="primary"):
-                            create_finals(_wid(match_a),_wid(match_c)); update_state(semifinals_complete=True,phase="final"); st.rerun()
-
-                if fn:
-                    st.markdown("<br>",unsafe_allow_html=True); render_bracket(fn,"Grand Final 🏆")
-                    if all(m["status"]=="completed" for m in fn):
-                        w=(fn[0].get("winner") or {}).get("name","")
-                        if w:
-                            show_win_celebration(f"🏆 Tournament Champion: {w}")
-                            st.markdown(f'<div class="match-complete"><div class="mc-label">🏆 Tournament Champion 🏆</div><div class="mc-winner">{w}</div><div style="font-size:36px;margin-top:10px">🏓🎉🏆</div></div>',unsafe_allow_html=True)
-                            update_state(phase="completed")
+            if fn:
+                st.markdown("<br>",unsafe_allow_html=True); render_bracket(fn,"Grand Final 🏆")
+                if all(m["status"]=="completed" for m in fn):
+                    w=(fn[0].get("winner") or {}).get("name","")
+                    if w:
+                        show_win_celebration(f"🏆 Tournament Champion: {w}")
+                        st.markdown(f'<div class="match-complete"><div class="mc-label">🏆 Tournament Champion 🏆</div><div class="mc-winner">{w}</div><div style="font-size:36px;margin-top:10px">🏓🎉🏆</div></div>',unsafe_allow_html=True)
+                        update_state(phase="completed")
 
     with tabs[6]:
         st.markdown('<div class="stitle">🚨 Disputes</div>',unsafe_allow_html=True)
@@ -1240,15 +1279,22 @@ def page_referee(user):
     # ── Side-by-side score display (HTML flex — always horizontal) ──
     sc_color1 = "#dc2626" if s1>=15 else "#dc2626"
     sc_color2 = "#1d4ed8" if s2>=15 else "#1d4ed8"
+    # Red box for T1, blue box for T2 — winner gets green border
+    t1_bg='#fff5f5' if s1>0 or True else '#fff'
+    t2_bg='#eff6ff' if s2>0 or True else '#fff'
+    t1_border='#16a34a' if s1>=15 else '#dc2626'
+    t2_border='#16a34a' if s2>=15 else '#1d4ed8'
+    t1_bord_w='4px' if s1>=15 else '2px'
+    t2_bord_w='4px' if s2>=15 else '2px'
     st.markdown(
         f'<div class="ref-score-row">'
-        f'<div style="flex:1;background:#fff;border:2px solid {"#16a34a" if s1>=15 else "#e2e8f0"};border-top:4px solid #dc2626;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
-        f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t1name}</div>'
+        f'<div style="flex:1;background:{t1_bg};border:{t1_bord_w} solid {t1_border};border-top:4px solid #dc2626;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(220,38,38,.12)">'
+        f'<div style="font-size:11px;font-weight:700;color:#dc2626;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t1name}</div>'
         f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#dc2626">{s1}{" 🏆" if s1>=15 else ""}</div></div>'
         f'<div class="ref-score-sep"><div style="font-size:13px;font-weight:900;color:#ef4444">●</div>'
         f'<div style="font-size:9px;color:#94a3b8;margin-top:2px;letter-spacing:1px">TO 15</div></div>'
-        f'<div style="flex:1;background:#fff;border:2px solid {"#16a34a" if s2>=15 else "#e2e8f0"};border-top:4px solid #1d4ed8;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.06)">'
-        f'<div style="font-size:11px;font-weight:700;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t2name}</div>'
+        f'<div style="flex:1;background:{t2_bg};border:{t2_bord_w} solid {t2_border};border-top:4px solid #1d4ed8;border-radius:14px;padding:14px 10px;text-align:center;box-shadow:0 2px 8px rgba(29,78,216,.12)">'
+        f'<div style="font-size:11px;font-weight:700;color:#1d4ed8;letter-spacing:1px;text-transform:uppercase;margin-bottom:4px">{t2name}</div>'
         f'<div style="font-family:Inter,sans-serif;font-size:72px;font-weight:900;line-height:1;color:#1d4ed8">{s2}{" 🏆" if s2>=15 else ""}</div></div>'
         f'</div>',
         unsafe_allow_html=True
@@ -1269,7 +1315,9 @@ def page_referee(user):
         with eg_col:
             if st.button("🔒 End Game — Lock Score",type="primary",use_container_width=True,key="endgame"):
                 end_game(match["id"])
-                if match.get("stage")=="group" and check_group_done(): update_state(group_stage_complete=True)
+                if match.get("stage")=="group" and check_group_done():
+                    update_state(group_stage_complete=True)
+                auto_advance_knockouts()
                 st.session_state["celebrate"]=winner_name_now
                 st.rerun()
         with undo_col2:
@@ -1310,11 +1358,14 @@ def page_referee(user):
     st.markdown("**🎯 Tag a Moment**")
     score_str=f"{s1}—{s2}"
     t1n=t1.get("name","T1"); t2n=t2.get("name","T2")
-    mg1,mg2,mg3,mg4=st.columns(4)
+    # Row 1: Shot buttons
+    mg1,mg2=st.columns(2)
     with mg1:
         if st.button(f"🎯 Shot: {t1n}",use_container_width=True,key="gs1"): add_moment(match["id"],"good_shot",t1.get("id"),score_str); st.rerun()
     with mg2:
         if st.button(f"🎯 Shot: {t2n}",use_container_width=True,key="gs2"): add_moment(match["id"],"good_shot",t2.get("id"),score_str); st.rerun()
+    # Row 2: Rally/Comeback
+    mg3,mg4=st.columns(2)
     with mg3:
         if st.button("🔥 Great Rally",use_container_width=True,key="gr"): add_moment(match["id"],"great_rally",None,score_str); st.rerun()
     with mg4:
