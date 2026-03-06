@@ -957,7 +957,7 @@ def page_admin(state):
         else: st.success("✅ All 17 registered!")
 
     with tabs[2]:
-        st.markdown('<div class="stitle">🎡 Team Assignment</div>',unsafe_allow_html=True)
+        st.markdown('<div class="stitle">🎲 Team Assignment</div>',unsafe_allow_html=True)
         teams=get_teams()
         if state["teams_assigned"] and teams:
             st.success("✅ Teams assigned."); show_teams_grid(teams)
@@ -965,28 +965,45 @@ def page_admin(state):
             users=get_all_users(); players=[u for u in users if u["role"]=="player"]
             if len(players)<14: st.warning(f"Need 14 players. Currently {len(players)}.")
             else:
-                st.info("🎡 Spin assigns all 14 players to 7 teams with actual team names.")
-                components.html(spin_wheel_html([p["name"] for p in players]),height=520)
-                st.markdown("---")
+                st.markdown(
+                    '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px;">'
+                    '<div style="font-size:15px;font-weight:800;color:#1e40af;margin-bottom:4px">🎲 Mystery Team Generator</div>'
+                    '<div style="font-size:13px;color:#3730a3">Click <b>Generate Mystery Partners</b> to randomly pair all 14 players into 7 teams. '
+                    'Preview the pairings, then confirm to lock them in — or regenerate for a fresh shuffle.</div>'
+                    '</div>', unsafe_allow_html=True
+                )
                 if "pending_teams" not in st.session_state:
-                    shuffled=random.sample(players,len(players))
-                    st.session_state.pending_teams=[
-                        {"name":TEAM_NAMES[i],"player1_id":shuffled[i*2]["id"],"player2_id":shuffled[i*2+1]["id"],
-                         "p1n":shuffled[i*2]["name"],"p2n":shuffled[i*2+1]["name"]}
-                        for i in range(7)]
-                st.markdown("**Teams preview:**")
-                gcols=st.columns(4)
-                for idx,t in enumerate(st.session_state.pending_teams):
-                    with gcols[idx%4]: st.markdown(f'**{t["name"]}**<br><small>{t["p1n"]} & {t["p2n"]}</small>',unsafe_allow_html=True)
-                ca,cb=st.columns([2,1])
-                with ca:
-                    if st.button("✅ Confirm & Save Teams",type="primary",use_container_width=True):
-                        create_teams([{"name":t["name"],"player1_id":t["player1_id"],"player2_id":t["player2_id"]} for t in st.session_state.pending_teams])
-                        update_state(teams_assigned=True); del st.session_state.pending_teams; st.rerun()
-                with cb:
-                    if st.button("🔀 Re-randomise",use_container_width=True):
-                        if "pending_teams" in st.session_state: del st.session_state.pending_teams
+                    # Don't auto-generate — wait for button press
+                    if st.button("🎲 Generate Mystery Partners & Teams",type="primary",use_container_width=True,key="gen_teams"):
+                        shuffled=random.sample(players,len(players))
+                        st.session_state.pending_teams=[
+                            {"name":TEAM_NAMES[i],"player1_id":shuffled[i*2]["id"],"player2_id":shuffled[i*2+1]["id"],
+                             "p1n":shuffled[i*2]["name"],"p2n":shuffled[i*2+1]["name"]}
+                            for i in range(7)]
                         st.rerun()
+                else:
+                    st.markdown("### 👀 Team Preview")
+                    gcols=st.columns(4)
+                    for idx,t in enumerate(st.session_state.pending_teams):
+                        color=TEAM_COLORS[idx%len(TEAM_COLORS)]
+                        with gcols[idx%4]:
+                            st.markdown(
+                                f'<div style="background:#fff;border:1px solid #e2e8f0;border-top:3px solid {color};border-radius:10px;padding:12px;margin-bottom:10px">'
+                                f'<div style="font-size:12px;font-weight:800;color:#0f172a;margin-bottom:6px">{t["name"]}</div>'
+                                f'<div style="font-size:12px;color:#475569">🏓 {t["p1n"]}</div>'
+                                f'<div style="font-size:12px;color:#475569">🏓 {t["p2n"]}</div></div>',
+                                unsafe_allow_html=True
+                            )
+                    st.markdown("<br>",unsafe_allow_html=True)
+                    ca,cb=st.columns([2,1])
+                    with ca:
+                        if st.button("✅ Confirm & Lock Teams",type="primary",use_container_width=True):
+                            create_teams([{"name":t["name"],"player1_id":t["player1_id"],"player2_id":t["player2_id"]} for t in st.session_state.pending_teams])
+                            update_state(teams_assigned=True); del st.session_state.pending_teams; st.rerun()
+                    with cb:
+                        if st.button("🔀 Re-shuffle",use_container_width=True):
+                            if "pending_teams" in st.session_state: del st.session_state.pending_teams
+                            st.rerun()
 
     with tabs[3]:
         st.markdown('<div class="stitle">📅 Schedule</div>',unsafe_allow_html=True)
@@ -1404,7 +1421,7 @@ def page_player(user):
             unsafe_allow_html=True
         )
 
-    tabs=st.tabs(["🔴 Live","📅 Schedule","📅 My Matches","🏆 Standings","🏅 Awards","📜 History"])
+    tabs=st.tabs(["🔴 Live","📅 Schedule","📅 My Matches","👥 All Teams","🏆 Standings","🏅 Awards","📜 History"])
 
     with tabs[0]:
         st.markdown('<div class="stitle">🔴 Live Scores & Highlights</div>',unsafe_allow_html=True)
@@ -1433,12 +1450,43 @@ def page_player(user):
                 st.markdown(f"<br>**{won}W / {played-won}L** from {played} played · {len(my_m)-played} remaining",unsafe_allow_html=True)
 
     with tabs[3]:
+        st.markdown('<div class="stitle">👥 All Teams</div>',unsafe_allow_html=True)
+        all_teams=get_teams()
+        if not all_teams:
+            st.info("Teams haven't been assigned yet. Check back soon!")
+        else:
+            st.caption(f"{len(all_teams)} teams competing")
+            # Grid: 2 cols on mobile, 3-4 on desktop via responsive HTML
+            teams_html='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:8px">'
+            for i,t in enumerate(sorted(all_teams,key=lambda x:x["name"])):
+                p1n=(t.get("p1") or {}).get("name","?"); p2n=(t.get("p2") or {}).get("name","?")
+                color=TEAM_COLORS[i%len(TEAM_COLORS)]
+                is_mine = my_team and t["id"]==my_team["id"]
+                border_extra = f"box-shadow:0 0 0 3px {color};" if is_mine else ""
+                mine_badge = ' <span style="font-size:9px;font-weight:700;background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:20px;vertical-align:middle">YOU</span>' if is_mine else ""
+                teams_html+=(
+                    f'<div style="background:#fff;border:1px solid #e2e8f0;border-top:4px solid {color};border-radius:12px;padding:14px;{border_extra}">'
+                    f'<div style="font-size:13px;font-weight:800;color:#0f172a;margin-bottom:8px">{t["name"]}{mine_badge}</div>'
+                    f'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+                    f'<span style="font-size:14px">🏓</span>'
+                    f'<span style="font-size:13px;font-weight:600;color:#334155">{p1n}</span></div>'
+                    f'<div style="display:flex;align-items:center;gap:6px">'
+                    f'<span style="font-size:14px">🏓</span>'
+                    f'<span style="font-size:13px;font-weight:600;color:#334155">{p2n}</span></div>'
+                    f'</div>'
+                )
+            teams_html+='</div>'
+            st.markdown(teams_html,unsafe_allow_html=True)
+            if my_team:
+                st.markdown(f"<br><small>🟢 Highlighted = your team (**{my_team['name']}**)</small>",unsafe_allow_html=True)
+
+    with tabs[4]:
         st.markdown('<div class="stitle">🏆 Standings</div>',unsafe_allow_html=True)
         rows=get_leaderboard()
         if not rows: st.info("No data yet.")
         else: render_leaderboard(rows,my_team["name"] if my_team else None)
 
-    with tabs[4]:
+    with tabs[5]:
         st.markdown('<div class="stitle">🏅 Awards & Voting</div>',unsafe_allow_html=True)
         revealed=get_revealed()
         # Awards gate: entire tournament (25 matches) must be complete
@@ -1508,7 +1556,7 @@ def page_player(user):
                                     else: st.error("Already voted or error.")
                         st.markdown("</div>",unsafe_allow_html=True)
 
-    with tabs[5]:
+    with tabs[6]:
         st.markdown('<div class="stitle">📜 Match History</div>',unsafe_allow_html=True)
         history=get_match_history()
         st.caption(f"{len(history)} matches completed")
